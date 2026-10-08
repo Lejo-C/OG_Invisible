@@ -3,6 +3,7 @@ export interface AppState {
   saturation: number;
   brightness: number;
   playbackRate: number;
+  governorEnabled: boolean;
 }
 
 export interface Telemetry {
@@ -14,6 +15,7 @@ export interface Telemetry {
   score: number;
   level: string;
   intervention: string;
+  governorLevel: string;
 }
 
 const DEFAULT_STATE: AppState = {
@@ -21,6 +23,7 @@ const DEFAULT_STATE: AppState = {
   saturation: 100,
   brightness: 100,
   playbackRate: 1.0,
+  governorEnabled: false,
 };
 
 let currentState: AppState = { ...DEFAULT_STATE };
@@ -175,6 +178,8 @@ function analyzeFrame() {
       intervention = 'Low intervention';
     }
 
+    const governorLevel = getGovernorLevel(clampedScore);
+
     latestTelemetry = {
       saturation: Math.round(sSat),
       brightness: Math.round(sBri),
@@ -183,11 +188,15 @@ function analyzeFrame() {
       cutsPerMin: cutsPerMinRaw,
       score: clampedScore,
       level,
-      intervention
+      intervention,
+      governorLevel,
     };
 
     lastImageData = new Uint8ClampedArray(imageData);
     lastBrightness = avgBrightness;
+
+    // Run the automatic governor (additive — only when enabled)
+    runGovernor(clampedScore);
 
     try {
       chrome.runtime.sendMessage({ type: 'TELEMETRY', payload: latestTelemetry }).catch(() => {});
@@ -198,6 +207,68 @@ function analyzeFrame() {
   }
 }
 
+// ─── Automatic Governor ─────────────────────────────────────────────────────
+// This is a NEW additive layer. It does NOT modify any existing functions.
+// It reuses applySettings() and currentState to apply its adjustments.
+
+const GOVERNOR_PRESETS: Record<string, { saturation: number; brightness: number; playbackRate: number }> = {
+  none:       { saturation: 100, brightness: 100, playbackRate: 1.00 },
+  mild:       { saturation:  90, brightness:  95, playbackRate: 0.95 },
+  moderate:   { saturation:  80, brightness:  90, playbackRate: 0.90 },
+  strong:     { saturation:  70, brightness:  82, playbackRate: 0.80 },
+  veryStrong: { saturation:  60, brightness:  75, playbackRate: 0.70 },
+};
+
+function getGovernorLevel(score: number): string {
+  if (score > 85) return 'veryStrong';
+  if (score > 70) return 'strong';
+  if (score > 50) return 'moderate';
+  if (score > 30) return 'mild';
+  return 'none';
+}
+
+let lastGovernorLevel = 'none';
+let governorCandidateLevel = 'none'; // level being evaluated for hysteresis
+let governorStableCount = 0;         // consecutive frames candidate has been stable
+const GOVERNOR_HYSTERESIS = 6;       // ~1.5 s at 4 FPS before a level change commits
+
+function runGovernor(score: number) {
+  if (!currentState.governorEnabled) return;
+
+  const newLevel = getGovernorLevel(score);
+
+  // Nothing to do — already at this level
+  if (newLevel === lastGovernorLevel) {
+    governorCandidateLevel = newLevel;
+    governorStableCount = 0;
+    return;
+  }
+
+  // A different level is being proposed — track how long it stays stable
+  if (newLevel !== governorCandidateLevel) {
+    // Candidate changed; restart hysteresis countdown
+    governorCandidateLevel = newLevel;
+    governorStableCount = 1;
+    return;
+  }
+
+  // Same candidate as last frame — accumulate
+  governorStableCount++;
+  if (governorStableCount < GOVERNOR_HYSTERESIS) return;
+
+  // Candidate has been stable long enough — commit it
+  governorStableCount = 0;
+  lastGovernorLevel = newLevel;
+
+  const preset = GOVERNOR_PRESETS[newLevel];
+  // Write the governor's target values directly into the in-memory state
+  // and call the existing applySettings() — the same path manual controls use.
+  // We do NOT write to chrome.storage so the user's saved manual values are preserved.
+  currentState = { ...currentState, ...preset };
+  applySettings();
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 // Initial load
 chrome.storage.local.get(['appState'], (result) => {
   if (result.appState) {
@@ -206,10 +277,23 @@ chrome.storage.local.get(['appState'], (result) => {
   findVideoElement();
 });
 
-// Listen for storage changes as a reliable fallback for manual controls
+// Listen for storage changes as a reliable fallback for manual controls.
+// When the governor is active, preserve its in-memory values so storage writes
+// from other sources (popup re-sync) do not undo the governor's adjustments.
 chrome.storage.onChanged.addListener((changes, namespace) => {
   if (namespace === 'local' && changes.appState) {
-    currentState = changes.appState.newValue;
+    const incoming = changes.appState.newValue as AppState;
+    if (currentState.governorEnabled && incoming.governorEnabled) {
+      // Governor is on: only sync the flags, not the governor-controlled fields
+      currentState = {
+        ...currentState,
+        enabled: incoming.enabled,
+        governorEnabled: incoming.governorEnabled,
+      };
+    } else {
+      // Governor is off: full sync (existing behaviour)
+      currentState = incoming;
+    }
     applySettings();
   }
 });
@@ -217,6 +301,12 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'UPDATE_STATE') {
     currentState = message.payload;
+    // If governor was just turned off, reset its level so next enable is fresh
+    if (!currentState.governorEnabled) {
+      lastGovernorLevel = 'none';
+      governorCandidateLevel = 'none';
+      governorStableCount = 0;
+    }
     applySettings();
   } else if (message.type === 'GET_TELEMETRY') {
     sendResponse({ telemetry: latestTelemetry });

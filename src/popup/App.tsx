@@ -5,6 +5,7 @@ export interface AppState {
   saturation: number;
   brightness: number;
   playbackRate: number;
+  governorEnabled: boolean;
 }
 
 export interface Telemetry {
@@ -16,6 +17,7 @@ export interface Telemetry {
   score: number;
   level: string;
   intervention: string;
+  governorLevel: string;
 }
 
 const DEFAULT_STATE: AppState = {
@@ -23,6 +25,7 @@ const DEFAULT_STATE: AppState = {
   saturation: 100,
   brightness: 100,
   playbackRate: 1.0,
+  governorEnabled: false,
 };
 
 export const App: React.FC = () => {
@@ -165,6 +168,41 @@ export const App: React.FC = () => {
             <span className="font-mono text-slate-300">{telemetry?.motion ?? 0}</span>
           </div>
         </div>
+      </div>
+
+      {/* Auto Governor — NEW additive block */}
+      <div className="bg-slate-800/60 rounded-xl p-4 mb-4 border border-slate-700/60">
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-xs font-bold text-slate-300 tracking-wider">AUTO GOVERNOR</span>
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              className="sr-only peer"
+              checked={state.governorEnabled}
+              onChange={(e) => updateState({ governorEnabled: e.target.checked })}
+            />
+            <div className="w-10 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-violet-500"></div>
+          </label>
+        </div>
+        <div className="flex justify-between items-center text-[11px]">
+          <span className="text-slate-400">Governor Level</span>
+          <span className={`font-mono font-bold ${
+            !telemetry?.governorLevel || telemetry.governorLevel === 'none' ? 'text-emerald-400' :
+            telemetry.governorLevel === 'mild' ? 'text-yellow-400' :
+            telemetry.governorLevel === 'moderate' ? 'text-orange-400' :
+            telemetry.governorLevel === 'strong' ? 'text-red-400' :
+            'text-red-500'
+          }`}>
+            {telemetry?.governorLevel
+              ? telemetry.governorLevel === 'veryStrong' ? 'Very Strong'
+              : telemetry.governorLevel.charAt(0).toUpperCase() + telemetry.governorLevel.slice(1)
+              : 'None'
+            }
+          </span>
+        </div>
+        {!state.governorEnabled && (
+          <p className="text-[10px] text-slate-500 mt-2">Enable to allow automatic adjustments.</p>
+        )}
       </div>
 
       <div className="text-xs font-bold text-slate-500 tracking-wider mb-4 px-1">MANUAL CONTROLS</div>
