@@ -18,6 +18,13 @@ export interface Telemetry {
   level: string;
   intervention: string;
   governorLevel: string;
+  flashDetected: boolean;
+}
+
+export interface ActionLogEntry {
+  time: string;
+  score: number;
+  level: string;
 }
 
 const DEFAULT_STATE: AppState = {
@@ -32,6 +39,7 @@ export const App: React.FC = () => {
   const [state, setState] = useState<AppState>(DEFAULT_STATE);
   const [loaded, setLoaded] = useState(false);
   const [telemetry, setTelemetry] = useState<Telemetry | null>(null);
+  const [actionLog, setActionLog] = useState<ActionLogEntry[]>([]);
 
   const fetchTelemetry = () => {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -59,12 +67,25 @@ export const App: React.FC = () => {
     const messageListener = (message: any) => {
       if (message.type === 'TELEMETRY') {
         setTelemetry(message.payload);
+      } else if (message.type === 'ACTION_LOG') {
+        setActionLog(message.payload);
       }
     };
     chrome.runtime.onMessage.addListener(messageListener);
 
     // Initial fetch telemetry when popup opens
     fetchTelemetry();
+
+    // Initial fetch of existing action log
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]?.id) {
+        chrome.tabs.sendMessage(tabs[0].id, { type: 'GET_ACTION_LOG' }, (response) => {
+          if (!chrome.runtime.lastError && response?.actionLog) {
+            setActionLog(response.actionLog);
+          }
+        });
+      }
+    });
 
     return () => {
       chrome.runtime.onMessage.removeListener(messageListener);
@@ -255,6 +276,27 @@ export const App: React.FC = () => {
         </div>
 
       </div>
+
+      {/* Recent Actions — additive Layer 1 section */}
+      {actionLog.length > 0 && (
+        <div className="mt-5">
+          <div className="text-xs font-bold text-slate-500 tracking-wider mb-2 px-1">RECENT ACTIONS</div>
+          <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
+            {[...actionLog].reverse().map((entry, i) => (
+              <div key={i} className="flex justify-between items-center px-3 py-1.5 text-[10px] border-b border-slate-700/30 last:border-0">
+                <span className="font-mono text-slate-500">{entry.time}</span>
+                <span className="font-mono text-slate-300">Score {entry.score}</span>
+                <span className={`font-mono font-bold ${
+                  entry.level === 'None' ? 'text-emerald-400' :
+                  entry.level === 'Mild' ? 'text-yellow-400' :
+                  entry.level === 'Moderate' ? 'text-orange-400' :
+                  entry.level === 'Strong' ? 'text-red-400' : 'text-red-500'
+                }`}>{entry.level}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

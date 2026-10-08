@@ -16,6 +16,7 @@ export interface Telemetry {
   level: string;
   intervention: string;
   governorLevel: string;
+  flashDetected: boolean;
 }
 
 const DEFAULT_STATE: AppState = {
@@ -190,6 +191,7 @@ function analyzeFrame() {
       level,
       intervention,
       governorLevel,
+      flashDetected: flickerScore >= 60,
     };
 
     lastImageData = new Uint8ClampedArray(imageData);
@@ -321,3 +323,120 @@ setInterval(() => {
 setInterval(analyzeFrame, 250); // 4 FPS
 
 console.log('[Stimulation Governor] Content script loaded and active.');
+
+// ─── On-video Status Badge ───────────────────────────────────────────────────
+// Single badge element created once and reused. Never duplicated.
+const BADGE_ID = 'og-stimulation-badge';
+
+function getOrCreateBadge(): HTMLElement {
+  let badge = document.getElementById(BADGE_ID);
+  if (!badge) {
+    badge = document.createElement('div');
+    badge.id = BADGE_ID;
+    badge.style.cssText = [
+      'position:absolute',
+      'top:12px',
+      'right:12px',
+      'z-index:9999',
+      'background:rgba(0,0,0,0.72)',
+      'color:#e2e8f0',
+      'font-family:monospace',
+      'font-size:11px',
+      'line-height:1.6',
+      'padding:6px 10px',
+      'border-radius:6px',
+      'pointer-events:none',
+      'white-space:nowrap',
+      'border:1px solid rgba(255,255,255,0.08)',
+    ].join(';');
+    document.body.appendChild(badge);
+  }
+  return badge;
+}
+
+function positionBadgeOverVideo() {
+  const badge = document.getElementById(BADGE_ID);
+  if (!badge || !videoElement) return;
+  const container = videoElement.closest('.html5-video-container, .ytd-player, #movie_player') as HTMLElement | null;
+  const parent = container || (videoElement.parentElement as HTMLElement | null);
+  if (parent && badge.parentElement !== parent) {
+    parent.style.position = parent.style.position || 'relative';
+    parent.appendChild(badge);
+  }
+}
+
+function updateBadge() {
+  const badge = getOrCreateBadge();
+  if (!currentState.enabled || !latestTelemetry) {
+    badge.style.display = 'none';
+    return;
+  }
+  badge.style.display = 'block';
+  positionBadgeOverVideo();
+  const t = latestTelemetry;
+  const govLabel = t.governorLevel === 'veryStrong' ? 'VERY STRONG'
+    : t.governorLevel === 'none' ? 'NONE'
+    : t.governorLevel.toUpperCase();
+  const flashLine = t.flashDetected ? '\nFLASH: DETECTED' : '';
+  badge.textContent = `STIMULATION ${t.score}  ${t.level}\nACTION: ${govLabel}${flashLine}`;
+  badge.style.whiteSpace = 'pre';
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── Action Log ──────────────────────────────────────────────────────────────
+// In-memory log; records only committed governor-level changes.
+const ACTION_LOG_MAX = 10;
+
+export interface ActionLogEntry {
+  time: string;
+  score: number;
+  level: string;
+}
+
+const actionLog: ActionLogEntry[] = [];
+let lastLoggedGovernorLevel = '';
+
+function maybeLogAction(score: number, governorLevel: string) {
+  if (governorLevel === lastLoggedGovernorLevel) return;
+  lastLoggedGovernorLevel = governorLevel;
+  const now = new Date();
+  const time = now.toTimeString().slice(0, 8);
+  const label = governorLevel === 'veryStrong' ? 'Very Strong'
+    : governorLevel === 'none' ? 'None'
+    : governorLevel.charAt(0).toUpperCase() + governorLevel.slice(1);
+  actionLog.push({ time, score, level: label });
+  if (actionLog.length > ACTION_LOG_MAX) actionLog.shift();
+  // Push updated log to popup if it's open
+  try {
+    chrome.runtime.sendMessage({ type: 'ACTION_LOG', payload: [...actionLog] }).catch(() => {});
+  } catch(e) {}
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Hook badge update and action-log into the existing analyzeFrame timer cycle.
+// We attach to the same 250 ms interval indirectly: call them from within the
+// existing TELEMETRY send block by extending the message handler chain.
+setInterval(() => {
+  updateBadge();
+  if (latestTelemetry) {
+    maybeLogAction(latestTelemetry.score, latestTelemetry.governorLevel);
+  }
+}, 500);
+
+// Position badge whenever video element changes (SPA navigation).
+// Hooks into the existing 500 ms interval already calling findVideoElement().
+let _lastVideoForBadge: HTMLVideoElement | null = null;
+setInterval(() => {
+  if (videoElement && videoElement !== _lastVideoForBadge) {
+    _lastVideoForBadge = videoElement;
+    positionBadgeOverVideo();
+  }
+}, 600);
+
+// Handle GET_ACTION_LOG message from popup.
+// Extends the existing onMessage listener by adding a new message type.
+chrome.runtime.onMessage.addListener((message, _sender2, sendResponse2) => {
+  if (message.type === 'GET_ACTION_LOG') {
+    sendResponse2({ actionLog: [...actionLog] });
+  }
+});
