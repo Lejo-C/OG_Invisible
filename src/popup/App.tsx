@@ -19,6 +19,14 @@ export interface Telemetry {
   intervention: string;
   governorLevel: string;
   flashDetected: boolean;
+  mlLabel?: string;
+  mlProbability?: number;
+  mlReady?: boolean;
+  // Layer 3 shadow recommendation (preview-only)
+  l3Level?: string;
+  l3TargetSaturation?: number;
+  l3TargetBrightness?: number;
+  l3TargetPlaybackRate?: number;
 }
 
 export interface ActionLogEntry {
@@ -224,6 +232,25 @@ export const App: React.FC = () => {
         {!state.governorEnabled && (
           <p className="text-[10px] text-slate-500 mt-2">Enable to allow automatic adjustments.</p>
         )}
+
+        {/* Layer 3 Preview indicator */}
+        <div className="flex justify-between items-center text-[11px] mt-2 pt-2 border-t border-slate-700/40">
+          <span className="text-slate-500">L3 Preview</span>
+          <span className={`font-mono font-bold ${
+            !telemetry?.l3Level || telemetry.l3Level === 'none' ? 'text-slate-500' :
+            telemetry.l3Level === 'mild' ? 'text-yellow-400' :
+            telemetry.l3Level === 'moderate' ? 'text-orange-400' :
+            telemetry.l3Level === 'strong' ? 'text-red-400' :
+            'text-red-500'
+          }`}>
+            {telemetry?.l3Level
+              ? telemetry.l3Level === 'veryStrong' ? 'VERY STRONG'
+              : telemetry.l3Level === 'none' ? 'NONE'
+              : telemetry.l3Level.toUpperCase()
+              : 'NONE'
+            }
+          </span>
+        </div>
       </div>
 
       <div className="text-xs font-bold text-slate-500 tracking-wider mb-4 px-1">MANUAL CONTROLS</div>
@@ -234,7 +261,12 @@ export const App: React.FC = () => {
         <div className="space-y-2">
           <div className="flex justify-between items-center">
             <label className="text-xs font-medium text-slate-300">Target Saturation</label>
-            <span className="text-xs font-mono bg-slate-800 text-slate-300 px-2 py-0.5 rounded shadow-inner">{state.saturation}%</span>
+            <div className="flex items-center gap-1.5">
+              {telemetry?.l3Level && telemetry.l3Level !== 'none' && (
+                <span className="text-[10px] font-mono text-violet-400">{telemetry.l3TargetSaturation}%</span>
+              )}
+              <span className="text-xs font-mono bg-slate-800 text-slate-300 px-2 py-0.5 rounded shadow-inner">{state.saturation}%</span>
+            </div>
           </div>
           <input 
             type="range" 
@@ -249,7 +281,12 @@ export const App: React.FC = () => {
         <div className="space-y-2">
           <div className="flex justify-between items-center">
             <label className="text-xs font-medium text-slate-300">Target Brightness</label>
-            <span className="text-xs font-mono bg-slate-800 text-slate-300 px-2 py-0.5 rounded shadow-inner">{state.brightness}%</span>
+            <div className="flex items-center gap-1.5">
+              {telemetry?.l3Level && telemetry.l3Level !== 'none' && (
+                <span className="text-[10px] font-mono text-violet-400">{telemetry.l3TargetBrightness}%</span>
+              )}
+              <span className="text-xs font-mono bg-slate-800 text-slate-300 px-2 py-0.5 rounded shadow-inner">{state.brightness}%</span>
+            </div>
           </div>
           <input 
             type="range" 
@@ -264,7 +301,12 @@ export const App: React.FC = () => {
         <div className="space-y-2">
           <div className="flex justify-between items-center">
             <label className="text-xs font-medium text-slate-300">Playback Speed</label>
-            <span className="text-xs font-mono bg-slate-800 text-slate-300 px-2 py-0.5 rounded shadow-inner">{state.playbackRate.toFixed(2)}x</span>
+            <div className="flex items-center gap-1.5">
+              {telemetry?.l3Level && telemetry.l3Level !== 'none' && (
+                <span className="text-[10px] font-mono text-violet-400">{telemetry.l3TargetPlaybackRate?.toFixed(2)}x</span>
+              )}
+              <span className="text-xs font-mono bg-slate-800 text-slate-300 px-2 py-0.5 rounded shadow-inner">{state.playbackRate.toFixed(2)}x</span>
+            </div>
           </div>
           <input 
             type="range" 

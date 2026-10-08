@@ -1,3 +1,6 @@
+import { processFrameLayer2, resetLayer2 } from './layer2Inference';
+import { updateLayer3, resetLayer3 } from './layer3Governor';
+
 export interface AppState {
   enabled: boolean;
   saturation: number;
@@ -17,6 +20,14 @@ export interface Telemetry {
   intervention: string;
   governorLevel: string;
   flashDetected: boolean;
+  mlLabel?: string;
+  mlProbability?: number;
+  mlReady?: boolean;
+  // Layer 3 shadow recommendation (preview-only, does NOT control video)
+  l3Level?: string;
+  l3TargetSaturation?: number;
+  l3TargetBrightness?: number;
+  l3TargetPlaybackRate?: number;
 }
 
 const DEFAULT_STATE: AppState = {
@@ -51,6 +62,8 @@ function findVideoElement() {
   const video = (document.querySelector('video.html5-main-video') || document.querySelector('video')) as HTMLVideoElement | null;
   if (video && video !== videoElement) {
     videoElement = video;
+    resetLayer2();
+    resetLayer3();
     
     videoElement.addEventListener('ratechange', () => {
       if (currentState.enabled && videoElement && videoElement.playbackRate !== currentState.playbackRate) {
@@ -144,7 +157,8 @@ function analyzeFrame() {
     const flickerScore = Math.min(100, (flickerRaw / 20) * 100); 
     
     const now = Date.now();
-    if (avgMotionRaw > 30 && !isPaused) {
+    const isCutBool = (avgMotionRaw > 30 && !isPaused);
+    if (isCutBool) {
       cutTimestamps.push(now);
     }
     cutTimestamps = cutTimestamps.filter(t => now - t < 60000);
@@ -181,6 +195,33 @@ function analyzeFrame() {
 
     const governorLevel = getGovernorLevel(clampedScore);
 
+    // --- Layer 2 Shadow Mode Integration ---
+    const l2Result = processFrameLayer2(
+      avgSaturation,
+      avgBrightness,
+      motionScore,
+      flickerScore,
+      isCutBool,
+      isPaused,
+      clampedScore,
+      level
+    );
+
+    let currentMlLabel = latestTelemetry?.mlLabel;
+    let currentMlProb = latestTelemetry?.mlProbability;
+    let currentMlReady = latestTelemetry?.mlReady || false;
+
+    if (l2Result) {
+      currentMlLabel = l2Result.mlLabel;
+      currentMlProb = l2Result.mlProbability;
+      currentMlReady = true;
+    }
+    // ---------------------------------------
+
+    // --- Layer 3 Shadow Mode (advisory only, does NOT control video) ---
+    const l3 = updateLayer3(clampedScore, currentMlLabel);
+    // -------------------------------------------------------------------
+
     latestTelemetry = {
       saturation: Math.round(sSat),
       brightness: Math.round(sBri),
@@ -192,6 +233,14 @@ function analyzeFrame() {
       intervention,
       governorLevel,
       flashDetected: flickerScore >= 60,
+      mlLabel: currentMlLabel,
+      mlProbability: currentMlProb,
+      mlReady: currentMlReady,
+      // Layer 3 preview (shadow-only)
+      l3Level: l3.level,
+      l3TargetSaturation: l3.targetSaturation,
+      l3TargetBrightness: l3.targetBrightness,
+      l3TargetPlaybackRate: l3.targetPlaybackRate,
     };
 
     lastImageData = new Uint8ClampedArray(imageData);
@@ -378,7 +427,10 @@ function updateBadge() {
     : t.governorLevel === 'none' ? 'NONE'
     : t.governorLevel.toUpperCase();
   const flashLine = t.flashDetected ? '\nFLASH: DETECTED' : '';
-  badge.textContent = `STIMULATION ${t.score}  ${t.level}\nACTION: ${govLabel}${flashLine}`;
+  const mlLine = t.mlReady ? `\nML: ${t.mlLabel} ${Math.round((t.mlProbability || 0) * 100)}%` : '';
+  const l3Label = t.l3Level && t.l3Level !== 'none' ? t.l3Level === 'veryStrong' ? 'VERY STRONG' : t.l3Level.toUpperCase() : 'NONE';
+  const l3Line = `\nL3: ${l3Label} → Sat:${t.l3TargetSaturation ?? 100}% Bri:${t.l3TargetBrightness ?? 100}% Spd:${(t.l3TargetPlaybackRate ?? 1.0).toFixed(2)}x`;
+  badge.textContent = `STIMULATION ${t.score}  ${t.level}\nACTION: ${govLabel}${flashLine}${mlLine}${l3Line}`;
   badge.style.whiteSpace = 'pre';
 }
 // ─────────────────────────────────────────────────────────────────────────────

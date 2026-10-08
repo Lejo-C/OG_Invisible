@@ -28,3 +28,7 @@ pnpm-debug.log*
 *.sw?
 .DS_Store
 Thumbs.db
+
+
+Dataset/**
+Layer 2/Dataset/**
