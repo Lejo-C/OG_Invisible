@@ -28,6 +28,17 @@ export interface Telemetry {
   l3TargetSaturation?: number;
   l3TargetBrightness?: number;
   l3TargetPlaybackRate?: number;
+  // Layer 3 controller diagnostics
+  l3TargetScore?: number;
+  l3ControlError?: number;
+  l3Trend?: string;
+  l3SpikeDetected?: boolean;
+  l3RecoveryDetected?: boolean;
+  l3SustainedHighCount?: number;
+  l3RecoveryCount?: number;
+  l3EscalationCount?: number;
+  l3DeescalationCount?: number;
+  l3Reason?: string;
 }
 
 const DEFAULT_STATE: AppState = {
@@ -241,6 +252,16 @@ function analyzeFrame() {
       l3TargetSaturation: l3.targetSaturation,
       l3TargetBrightness: l3.targetBrightness,
       l3TargetPlaybackRate: l3.targetPlaybackRate,
+      l3TargetScore: l3.targetScore,
+      l3ControlError: l3.controlError,
+      l3Trend: l3.trend,
+      l3SpikeDetected: l3.spikeDetected,
+      l3RecoveryDetected: l3.recoveryDetected,
+      l3SustainedHighCount: l3.sustainedHighCount,
+      l3RecoveryCount: l3.recoveryCount,
+      l3EscalationCount: l3.escalationCount,
+      l3DeescalationCount: l3.deescalationCount,
+      l3Reason: l3.reason,
     };
 
     lastImageData = new Uint8ClampedArray(imageData);

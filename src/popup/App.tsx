@@ -27,6 +27,14 @@ export interface Telemetry {
   l3TargetSaturation?: number;
   l3TargetBrightness?: number;
   l3TargetPlaybackRate?: number;
+  l3TargetScore?: number;
+  l3ControlError?: number;
+  l3Trend?: string;
+  l3SpikeDetected?: boolean;
+  l3RecoveryDetected?: boolean;
+  l3EscalationCount?: number;
+  l3DeescalationCount?: number;
+  l3Reason?: string;
 }
 
 export interface ActionLogEntry {
@@ -234,22 +242,42 @@ export const App: React.FC = () => {
         )}
 
         {/* Layer 3 Preview indicator */}
-        <div className="flex justify-between items-center text-[11px] mt-2 pt-2 border-t border-slate-700/40">
-          <span className="text-slate-500">L3 Preview</span>
-          <span className={`font-mono font-bold ${
-            !telemetry?.l3Level || telemetry.l3Level === 'none' ? 'text-slate-500' :
-            telemetry.l3Level === 'mild' ? 'text-yellow-400' :
-            telemetry.l3Level === 'moderate' ? 'text-orange-400' :
-            telemetry.l3Level === 'strong' ? 'text-red-400' :
-            'text-red-500'
-          }`}>
-            {telemetry?.l3Level
-              ? telemetry.l3Level === 'veryStrong' ? 'VERY STRONG'
-              : telemetry.l3Level === 'none' ? 'NONE'
-              : telemetry.l3Level.toUpperCase()
-              : 'NONE'
-            }
-          </span>
+        <div className="space-y-1 mt-2 pt-2 border-t border-slate-700/40 text-[11px]">
+          <div className="flex justify-between items-center">
+            <span className="text-slate-500">L3 Preview</span>
+            <span className={`font-mono font-bold ${
+              !telemetry?.l3Level || telemetry.l3Level === 'none' ? 'text-slate-500' :
+              telemetry.l3Level === 'mild' ? 'text-yellow-400' :
+              telemetry.l3Level === 'moderate' ? 'text-orange-400' :
+              telemetry.l3Level === 'strong' ? 'text-red-400' :
+              'text-red-500'
+            }`}>
+              {telemetry?.l3Level
+                ? telemetry.l3Level === 'veryStrong' ? 'VERY STRONG'
+                : telemetry.l3Level === 'none' ? 'NONE'
+                : telemetry.l3Level.toUpperCase()
+                : 'NONE'
+              }
+            </span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-slate-500">Target / Error</span>
+            <span className="font-mono text-slate-400">
+              {telemetry?.l3TargetScore ?? 30} / <span className={telemetry?.l3ControlError != null && telemetry.l3ControlError > 0 ? 'text-orange-400' : 'text-emerald-400'}>{telemetry?.l3ControlError != null ? (telemetry.l3ControlError > 0 ? `+${telemetry.l3ControlError}` : telemetry.l3ControlError) : '—'}</span>
+            </span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-slate-500">Trend</span>
+            <span className={`font-mono ${
+              telemetry?.l3Trend === 'rising' ? 'text-red-400' :
+              telemetry?.l3Trend === 'falling' ? 'text-emerald-400' :
+              'text-slate-400'
+            }`}>
+              {telemetry?.l3Trend === 'rising' ? '↑ Rising' : telemetry?.l3Trend === 'falling' ? '↓ Falling' : '→ Stable'}
+              {telemetry?.l3SpikeDetected ? ' ⚡' : ''}
+              {telemetry?.l3RecoveryDetected ? ' ✓' : ''}
+            </span>
+          </div>
         </div>
       </div>
 
