@@ -6,6 +6,7 @@ export interface AppState {
   brightness: number;
   playbackRate: number;
   governorEnabled: boolean;
+  audioEnabled: boolean;
 }
 
 export interface Telemetry {
@@ -14,6 +15,7 @@ export interface Telemetry {
   flicker: number;
   motion: number;
   cutsPerMin: number;
+  audioScore: number;
   score: number;
   level: string;
   intervention: string;
@@ -49,6 +51,7 @@ const DEFAULT_STATE: AppState = {
   brightness: 100,
   playbackRate: 1.0,
   governorEnabled: false,
+  audioEnabled: false,
 };
 
 export const App: React.FC = () => {
@@ -135,15 +138,26 @@ export const App: React.FC = () => {
           <span className={`w-3 h-3 rounded-full inline-block transition-colors duration-300 ${state.enabled ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] animate-pulse' : 'bg-slate-600'}`}></span>
           Stimulation Governor
         </h1>
-        <label className="relative inline-flex items-center cursor-pointer">
-          <input 
-            type="checkbox" 
-            className="sr-only peer" 
-            checked={state.enabled}
-            onChange={(e) => updateState({ enabled: e.target.checked })}
-          />
-          <div className="w-10 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
-        </label>
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={() => chrome.runtime.openOptionsPage()}
+            className="text-slate-400 hover:text-white transition-colors"
+            title="Parental Dashboard"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+          </button>
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              className="sr-only peer" 
+              checked={state.enabled}
+              onChange={(e) => updateState({ enabled: e.target.checked })}
+            />
+            <div className="w-10 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+          </label>
+        </div>
       </header>
 
       {/* Telemetry Dashboard */}
@@ -216,7 +230,7 @@ export const App: React.FC = () => {
               type="checkbox"
               className="sr-only peer"
               checked={state.governorEnabled}
-              onChange={(e) => updateState({ governorEnabled: e.target.checked })}
+              onChange={(e) => updateState({ governorEnabled: e.target.checked, audioEnabled: e.target.checked })}
             />
             <div className="w-10 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-violet-500"></div>
           </label>
@@ -280,6 +294,7 @@ export const App: React.FC = () => {
           </div>
         </div>
       </div>
+      
 
       <div className="text-xs font-bold text-slate-500 tracking-wider mb-4 px-1">MANUAL CONTROLS</div>
 

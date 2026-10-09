@@ -1,5 +1,7 @@
 import { processFrameLayer2, resetLayer2 } from './layer2Inference';
 import { updateLayer3, resetLayer3 } from './layer3Governor';
+import { initAudio, setAudioEnabled, getAudioLoudness } from './audioProcessor';
+import { initTimeTracker, isTimeLimitReached, tickTimeTracker } from './timeTracker';
 
 export interface AppState {
   enabled: boolean;
@@ -7,6 +9,7 @@ export interface AppState {
   brightness: number;
   playbackRate: number;
   governorEnabled: boolean;
+  audioEnabled: boolean;
 }
 
 export interface Telemetry {
@@ -15,6 +18,7 @@ export interface Telemetry {
   flicker: number;
   motion: number;
   cutsPerMin: number;
+  audioScore: number;
   score: number;
   level: string;
   intervention: string;
@@ -47,6 +51,7 @@ const DEFAULT_STATE: AppState = {
   brightness: 100,
   playbackRate: 1.0,
   governorEnabled: false,
+  audioEnabled: false,
 };
 
 let currentState: AppState = { ...DEFAULT_STATE };
@@ -67,6 +72,9 @@ function applySettings() {
       videoElement.playbackRate = 1.0;
     }
   }
+  
+  // Sync audio compressor state
+  setAudioEnabled(currentState.audioEnabled);
 }
 
 function findVideoElement() {
@@ -83,6 +91,10 @@ function findVideoElement() {
     });
     
     videoElement.addEventListener('loadeddata', applySettings);
+    
+    // Initialize Web Audio graph
+    initAudio(videoElement);
+    
     applySettings();
   }
 }
@@ -132,6 +144,8 @@ function getBrightnessAndSaturation(r: number, g: number, b: number) {
 function analyzeFrame() {
   if (!videoElement || videoElement.readyState < 2 || !ctx) return;
   
+  if (!videoElement || videoElement.readyState < 2 || !ctx) return;
+
   try {
     ctx.drawImage(videoElement, 0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
     const imageData = ctx.getImageData(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT).data;
@@ -162,6 +176,10 @@ function analyzeFrame() {
     const avgSaturation = totalSaturation / numPixels;
     const isPaused = videoElement.paused;
     const avgMotionRaw = (lastImageData && !isPaused) ? (totalMotion / numPixels) : 0;
+    
+    // Time tracker (runs every frame loop)
+    const title = document.title.replace(' - YouTube', '').trim();
+    tickTimeTracker(!isPaused, title);
     
     const motionScore = Math.min(100, (avgMotionRaw / 60) * 100); 
     const flickerRaw = isPaused ? 0 : Math.abs(avgBrightness - lastBrightness);
@@ -204,8 +222,6 @@ function analyzeFrame() {
       intervention = 'Low intervention';
     }
 
-    const governorLevel = getGovernorLevel(clampedScore);
-
     // --- Layer 2 Shadow Mode Integration ---
     const l2Result = processFrameLayer2(
       avgSaturation,
@@ -229,9 +245,11 @@ function analyzeFrame() {
     }
     // ---------------------------------------
 
-    // --- Layer 3 Shadow Mode (advisory only, does NOT control video) ---
+    // --- Layer 3 Adaptive Controller (CONTROL MODE) ---
     const l3 = updateLayer3(clampedScore, currentMlLabel);
     // -------------------------------------------------------------------
+
+    const governorLevel = l3.level;
 
     latestTelemetry = {
       saturation: Math.round(sSat),
@@ -239,6 +257,7 @@ function analyzeFrame() {
       flicker: Math.round(sFli),
       motion: Math.round(sMot),
       cutsPerMin: cutsPerMinRaw,
+      audioScore: getAudioLoudness(),
       score: clampedScore,
       level,
       intervention,
@@ -267,8 +286,8 @@ function analyzeFrame() {
     lastImageData = new Uint8ClampedArray(imageData);
     lastBrightness = avgBrightness;
 
-    // Run the automatic governor (additive — only when enabled)
-    runGovernor(clampedScore);
+    // Run the automatic governor (applies Layer 3 targets when enabled)
+    runGovernor();
 
     try {
       chrome.runtime.sendMessage({ type: 'TELEMETRY', payload: latestTelemetry }).catch(() => {});
@@ -279,64 +298,31 @@ function analyzeFrame() {
   }
 }
 
-// ─── Automatic Governor ─────────────────────────────────────────────────────
-// This is a NEW additive layer. It does NOT modify any existing functions.
-// It reuses applySettings() and currentState to apply its adjustments.
-
-const GOVERNOR_PRESETS: Record<string, { saturation: number; brightness: number; playbackRate: number }> = {
-  none:       { saturation: 100, brightness: 100, playbackRate: 1.00 },
-  mild:       { saturation:  90, brightness:  95, playbackRate: 0.95 },
-  moderate:   { saturation:  80, brightness:  90, playbackRate: 0.90 },
-  strong:     { saturation:  70, brightness:  82, playbackRate: 0.80 },
-  veryStrong: { saturation:  60, brightness:  75, playbackRate: 0.70 },
-};
-
-function getGovernorLevel(score: number): string {
-  if (score > 85) return 'veryStrong';
-  if (score > 70) return 'strong';
-  if (score > 50) return 'moderate';
-  if (score > 30) return 'mild';
-  return 'none';
-}
-
+// ─── Automatic Governor (Driven by Layer 3) ────────────────────────────────
 let lastGovernorLevel = 'none';
-let governorCandidateLevel = 'none'; // level being evaluated for hysteresis
-let governorStableCount = 0;         // consecutive frames candidate has been stable
-const GOVERNOR_HYSTERESIS = 6;       // ~1.5 s at 4 FPS before a level change commits
 
-function runGovernor(score: number) {
-  if (!currentState.governorEnabled) return;
+function runGovernor() {
+  if (!currentState.governorEnabled || !latestTelemetry) return;
 
-  const newLevel = getGovernorLevel(score);
+  const newLevel = latestTelemetry.governorLevel;
 
   // Nothing to do — already at this level
   if (newLevel === lastGovernorLevel) {
-    governorCandidateLevel = newLevel;
-    governorStableCount = 0;
     return;
   }
 
-  // A different level is being proposed — track how long it stays stable
-  if (newLevel !== governorCandidateLevel) {
-    // Candidate changed; restart hysteresis countdown
-    governorCandidateLevel = newLevel;
-    governorStableCount = 1;
-    return;
-  }
-
-  // Same candidate as last frame — accumulate
-  governorStableCount++;
-  if (governorStableCount < GOVERNOR_HYSTERESIS) return;
-
-  // Candidate has been stable long enough — commit it
-  governorStableCount = 0;
+  // Candidate has changed (Layer 3 handles hysteresis internally)
   lastGovernorLevel = newLevel;
 
-  const preset = GOVERNOR_PRESETS[newLevel];
-  // Write the governor's target values directly into the in-memory state
+  // Write the Layer 3 target values directly into the in-memory state
   // and call the existing applySettings() — the same path manual controls use.
   // We do NOT write to chrome.storage so the user's saved manual values are preserved.
-  currentState = { ...currentState, ...preset };
+  currentState = { 
+    ...currentState, 
+    saturation: latestTelemetry.l3TargetSaturation ?? 100,
+    brightness: latestTelemetry.l3TargetBrightness ?? 100,
+    playbackRate: latestTelemetry.l3TargetPlaybackRate ?? 1.0,
+  };
   applySettings();
 }
 // ─────────────────────────────────────────────────────────────────────────────
@@ -361,6 +347,7 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
         ...currentState,
         enabled: incoming.enabled,
         governorEnabled: incoming.governorEnabled,
+        audioEnabled: incoming.audioEnabled,
       };
     } else {
       // Governor is off: full sync (existing behaviour)
@@ -372,12 +359,23 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'UPDATE_STATE') {
-    currentState = message.payload;
+    const incoming = message.payload as AppState;
+    if (currentState.governorEnabled && incoming.governorEnabled) {
+      // Governor is on: only sync the flags, not the governor-controlled fields
+      currentState = {
+        ...currentState,
+        enabled: incoming.enabled,
+        governorEnabled: incoming.governorEnabled,
+        audioEnabled: incoming.audioEnabled,
+      };
+    } else {
+      // Governor is off: full sync
+      currentState = incoming;
+    }
+    
     // If governor was just turned off, reset its level so next enable is fresh
     if (!currentState.governorEnabled) {
       lastGovernorLevel = 'none';
-      governorCandidateLevel = 'none';
-      governorStableCount = 0;
     }
     applySettings();
   } else if (message.type === 'GET_TELEMETRY') {
@@ -390,6 +388,43 @@ setInterval(() => {
   applySettings();
 }, 500);
 
+function enforceTimeLimitBlocker() {
+  if (isTimeLimitReached()) {
+    if (videoElement && !videoElement.paused) {
+      videoElement.pause();
+    }
+    let overlay = document.getElementById('og-time-blocker-overlay-full');
+    if (!overlay && videoElement && videoElement.parentElement) {
+      overlay = document.createElement('div');
+      overlay.id = 'og-time-blocker-overlay-full';
+      overlay.style.cssText = [
+        'position:absolute', 'top:0', 'left:0', 'width:100%', 'height:100%',
+        'background-color:#0f172a', 'z-index:999999', 'display:flex',
+        'flex-direction:column', 'align-items:center', 'justify-content:center',
+        'color:#f8fafc', 'font-family:-apple-system, sans-serif', 'text-align:center', 'padding:20px'
+      ].join(';');
+      overlay.innerHTML = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 20px;"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        <h1 style="font-size:24px; font-weight:bold; margin-bottom:10px;">Daily Time Limit Reached</h1>
+        <p style="font-size:16px; color:#94a3b8; max-width:400px; margin:0 auto;">You have reached your daily YouTube limit. Please take a break!</p>
+      `;
+      videoElement.parentElement.appendChild(overlay);
+    }
+    if (videoElement) {
+       videoElement.style.opacity = '0';
+    }
+  } else {
+    let overlay = document.getElementById('og-time-blocker-overlay-full');
+    if (overlay) {
+      overlay.remove();
+      if (videoElement) {
+        videoElement.style.opacity = '1';
+      }
+    }
+  }
+}
+
+setInterval(enforceTimeLimitBlocker, 500);
 setInterval(analyzeFrame, 250); // 4 FPS
 
 console.log('[Stimulation Governor] Content script loaded and active.');
@@ -449,12 +484,16 @@ function updateBadge() {
     : t.governorLevel.toUpperCase();
   const flashLine = t.flashDetected ? '\nFLASH: DETECTED' : '';
   const mlLine = t.mlReady ? `\nML: ${t.mlLabel} ${Math.round((t.mlProbability || 0) * 100)}%` : '';
+  const audioLine = `\nAUDIO: ${t.audioScore} ${currentState.audioEnabled ? '(CMP: ON)' : '(CMP: OFF)'}`;
   const l3Label = t.l3Level && t.l3Level !== 'none' ? t.l3Level === 'veryStrong' ? 'VERY STRONG' : t.l3Level.toUpperCase() : 'NONE';
   const l3Line = `\nL3: ${l3Label} → Sat:${t.l3TargetSaturation ?? 100}% Bri:${t.l3TargetBrightness ?? 100}% Spd:${(t.l3TargetPlaybackRate ?? 1.0).toFixed(2)}x`;
-  badge.textContent = `STIMULATION ${t.score}  ${t.level}\nACTION: ${govLabel}${flashLine}${mlLine}${l3Line}`;
+  badge.textContent = `STIMULATION ${t.score}  ${t.level}\nACTION: ${govLabel}${flashLine}${mlLine}${audioLine}${l3Line}`;
   badge.style.whiteSpace = 'pre';
 }
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Initialize modules
+initTimeTracker();
 
 // ─── Action Log ──────────────────────────────────────────────────────────────
 // In-memory log; records only committed governor-level changes.

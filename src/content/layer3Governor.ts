@@ -6,12 +6,9 @@
 //   Layer 3 adaptively chooses an intervention profile and observes whether
 //           the resulting stimulation reaches the target range.
 //
-// SHADOW MODE: This module is CURRENTLY shadow-only.
-//   It NEVER writes to currentState.
-//   It NEVER calls applySettings().
-//   It NEVER touches the video element.
-//   Its output is advisory — used for UI preview and telemetry only.
-//   Actual video control remains exclusively with the Layer 1 governor.
+// CONTROL MODE: This module acts as the brain. It evaluates conditions and returns
+// target values. index.ts takes these targets and applies them directly to the
+// video element via the runGovernor() loop.
 //
 // CLOSED-LOOP CONCEPT:
 //   OBSERVE stimulation → ANALYZE vs target → INTERVENE → OBSERVE result →
